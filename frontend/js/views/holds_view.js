@@ -7,13 +7,17 @@ export const holdsViewTemplate = `
       <input v-model.number="holdForm.seats" type="number" min="1" style="width:5rem" />
       <button @click="doHold">占位</button>
     </div>
+    <p class="err" v-if="renewNote">{{ renewNote }}</p>
     <p class="err" v-if="actionErr">{{ actionErr }}</p>
     <table>
-      <thead><tr><th>ID</th><th>档</th><th>当事人</th><th>席</th><th>态</th><th>过期</th></tr></thead>
+      <thead><tr><th>ID</th><th>档</th><th>当事人</th><th>席</th><th>态</th><th>过期</th><th></th></tr></thead>
       <tbody>
         <tr v-for="h in holds" :key="h.id">
           <td>{{ h.id }}</td><td>{{ h.slot_code }}</td><td>{{ h.party_key }}</td>
           <td>{{ h.seats }}</td><td>{{ h.status }}</td><td>{{ h.expire_at }}</td>
+          <td>
+            <button class="ghost" v-if="h.status==='占位中'" @click="doRenew(h)">续期</button>
+          </td>
         </tr>
       </tbody>
     </table>

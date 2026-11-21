@@ -10,13 +10,29 @@ router = APIRouter(tags=["audit"])
 
 
 @router.get("/api/audit")
-def list_audit(authorization: AuthHeader = None, limit: int = 100):
+def list_audit(
+    authorization: AuthHeader = None,
+    limit: int = 100,
+    action: str | None = None,
+    target: str | None = None,
+):
     require_user(authorization)
     lim = max(1, min(limit, 500))
+    where = []
+    args: list[object] = []
+    if action:
+        where.append("action=?")
+        args.append(action)
+    if target:
+        where.append("target=?")
+        args.append(target)
+    sql = "SELECT * FROM audit_trail"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(lim)
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM audit_trail ORDER BY id DESC LIMIT ?", (lim,)
-        ).fetchall()
+        rows = conn.execute(sql, tuple(args)).fetchall()
         return {"items": [dict(r) for r in rows]}
 
 

@@ -17,23 +17,27 @@ class LockIn(BaseModel):
 
 
 def try_acquire(conn, lock_key: str, holder: str) -> bool:
+    """原子抢档锁：先落锁再判归属，后到只记争用，不写业务。"""
     now = datetime.now().isoformat(timespec="seconds")
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO slot_locks(lock_key,holder,acquired_at) VALUES (?,?,?)",
+        (lock_key, holder, now),
+    )
+    if cur.rowcount == 1:
+        return True
     row = conn.execute(
         "SELECT holder FROM slot_locks WHERE lock_key=?", (lock_key,)
     ).fetchone()
-    if row is None:
-        conn.execute(
-            "INSERT INTO slot_locks(lock_key,holder,acquired_at) VALUES (?,?,?)",
-            (lock_key, holder, now),
-        )
+    if row is not None and row["holder"] == holder:
         return True
-    if row["holder"] == holder:
-        return True
+    current = row["holder"] if row is not None else "?"
     conn.execute(
         """INSERT INTO contention_log(lock_key,actor,action,detail,created_at)
            VALUES (?,?,?,?,?)""",
-        (lock_key, holder, "争用", f"持有者={row['holder']}", now),
+        (lock_key, holder, "争用", f"持有者={current}", now),
     )
+    # 争用痕独立于业务事务：后到被拒时业务要回滚，争用痕必须留下。
+    conn.commit()
     return False
 
 
