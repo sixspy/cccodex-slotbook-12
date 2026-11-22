@@ -16,7 +16,6 @@ createApp({
     const password = ref("123456");
     const err = ref("");
     const actionErr = ref("");
-    const renewNote = ref("");
     const tab = ref(0);
     const nav = ["档期盘", "占位单", "候补队列", "确认入册", "对账互证", "审计争用"];
     const slots = ref([]);
@@ -57,7 +56,6 @@ createApp({
     async function refresh() {
       if (!token.value) return;
       actionErr.value = "";
-      renewNote.value = "";
       dash.value = await api.get("/api/dashboard");
       slots.value = (await api.get("/api/slots")).items;
       holds.value = (await api.get("/api/holds")).items;
@@ -76,15 +74,6 @@ createApp({
       try { actionErr.value = ""; await api.post("/api/bookings/confirm", { hold_id: confirmId.value }); await refresh(); }
       catch (e) { actionErr.value = e.message; }
     }
-    async function doRenew(h) {
-      try {
-        actionErr.value = "";
-        renewNote.value = "";
-        const r = await api.post("/api/holds/renew", { hold_id: h.id, minutes: 30 });
-        await refresh();
-        renewNote.value = `续期至 ${r.expire_at}`;
-      } catch (e) { actionErr.value = e.message; }
-    }
     async function promoteWait(id) {
       try { actionErr.value = ""; await api.post("/api/waitlist/promote", { wait_id: id }); await refresh(); }
       catch (e) { actionErr.value = e.message; }
@@ -93,9 +82,9 @@ createApp({
     onMounted(() => { if (token.value) refresh(); });
 
     return {
-      token, user, username, password, err, actionErr, renewNote, tab, nav,
+      token, user, username, password, err, actionErr, tab, nav,
       slots, holds, waitlist, bookings, recon, audits, contention, dash,
-      holdForm, confirmId, login, logout, refresh, doHold, doConfirm, doRenew, promoteWait,
+      holdForm, confirmId, login, logout, refresh, doHold, doConfirm, promoteWait,
     };
   },
   template: `
