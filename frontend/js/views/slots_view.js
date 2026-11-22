@@ -6,6 +6,7 @@ export const slotsViewTemplate = `
       <div class="cell"><div class="n">{{ dash.holds_open }}</div>占位中</div>
       <div class="cell"><div class="n">{{ dash.bookings }}</div>正式册</div>
       <div class="cell"><div class="n">{{ dash.waitlist }}</div>候补</div>
+      <div class="cell"><div class="n">{{ dash.renew_total || 0 }}</div>续期（审计同源）</div>
     </div>
     <table>
       <thead><tr><th>编码</th><th>标题</th><th>容量</th><th>已订</th><th>态</th><th>代</th></tr></thead>

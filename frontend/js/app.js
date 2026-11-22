@@ -5,8 +5,9 @@ import { waitlistViewTemplate } from "./views/waitlist_view.js";
 import { confirmViewTemplate } from "./views/confirm_view.js";
 import { reconcileViewTemplate } from "./views/reconcile_view.js";
 import { auditViewTemplate } from "./views/audit_view.js";
+import { renewViewTemplate } from "./views/renew_view.js";
 
-const { createApp, ref, onMounted } = Vue;
+const { createApp, ref, onMounted, onUnmounted } = Vue;
 
 createApp({
   setup() {
@@ -17,7 +18,7 @@ createApp({
     const err = ref("");
     const actionErr = ref("");
     const tab = ref(0);
-    const nav = ["档期盘", "占位单", "候补队列", "确认入册", "对账互证", "审计争用"];
+    const nav = ["档期盘", "占位单", "候补队列", "确认入册", "对账互证", "审计争用", "续期"];
     const slots = ref([]);
     const holds = ref([]);
     const waitlist = ref([]);
@@ -28,6 +29,12 @@ createApp({
     const dash = ref({});
     const holdForm = ref({ slot_code: "S-AM-01", party_key: "P-NEW", seats: 1 });
     const confirmId = ref(1);
+    const renewAudits = ref([]);
+    const holdDetail = ref(null);
+    const detailId = ref(null);
+    // tick 只驱动倒计时重算，时刻事实始终是 holds/详情里的 expire_at，不另存
+    const nowTick = ref(Date.now());
+    let timer = null;
 
     function logout() {
       token.value = "";
@@ -64,6 +71,43 @@ createApp({
       recon.value = await api.get("/api/reconcile");
       audits.value = (await api.get("/api/audit")).items;
       contention.value = (await api.get("/api/contention")).items;
+      renewAudits.value = (await api.get("/api/audit?action=hold_renew&limit=200")).items;
+      nowTick.value = Date.now();
+    }
+
+    function countdown(expireAt) {
+      // 同源：只按正式行 expire_at 与当前 tick 计算，不维护本地过期时刻
+      const ms = new Date(expireAt).getTime() - nowTick.value;
+      if (Number.isNaN(ms)) return { text: "时刻无效", late: true };
+      if (ms <= 0) return { text: "已过期", late: true };
+      const m = Math.floor(ms / 60000);
+      const s = Math.floor((ms % 60000) / 1000);
+      return { text: `${m} 分 ${s} 秒`, late: false };
+    }
+
+    async function doRenew(holdId, minutes) {
+      try {
+        actionErr.value = "";
+        const r = await api.post(`/api/holds/${holdId}/renew`, { minutes });
+        // 回文时刻必须与正式行一致；refresh 后五处同源
+        await refresh();
+        const row = holds.value.find((x) => x.id === holdId);
+        if (!row || row.expire_at !== r.expire_at) {
+          actionErr.value = "续期回文与正式行过期时刻不同源";
+        }
+      } catch (e) {
+        await refresh();
+        actionErr.value = e.message;
+      }
+    }
+
+    async function loadHoldDetail() {
+      try {
+        actionErr.value = "";
+        holdDetail.value = await api.get(`/api/holds/${detailId.value}`);
+      } catch (e) {
+        actionErr.value = e.message;
+      }
     }
 
     async function doHold() {
@@ -79,12 +123,17 @@ createApp({
       catch (e) { actionErr.value = e.message; }
     }
 
-    onMounted(() => { if (token.value) refresh(); });
+    onMounted(() => {
+      timer = setInterval(() => { nowTick.value = Date.now(); }, 1000);
+      if (token.value) refresh();
+    });
+    onUnmounted(() => clearInterval(timer));
 
     return {
       token, user, username, password, err, actionErr, tab, nav,
       slots, holds, waitlist, bookings, recon, audits, contention, dash,
       holdForm, confirmId, login, logout, refresh, doHold, doConfirm, promoteWait,
+      renewAudits, holdDetail, detailId, countdown, doRenew, loadHoldDetail,
     };
   },
   template: `
@@ -118,6 +167,7 @@ createApp({
       ${confirmViewTemplate}
       ${reconcileViewTemplate}
       ${auditViewTemplate}
+      ${renewViewTemplate}
     </main>
   </div>
   `,

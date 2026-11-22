@@ -31,3 +31,18 @@
 - 确认失败整单回滚 vs 影子确认后晋升
 - 释放作废正式册 vs 快照强制复检
 - 跨档迁移整笔事务 vs 双写影子桥
+
+## 续期（2026-11-22 落）
+
+续期接口 `POST /api/holds/{hold_id}/renew` 不再只回文案：新过期时刻与 `hold_renew`
+审计在**同一事务单次提交**原子写进正式占位行（路线 A，决策见
+[`docs/续期落时刻说明.md`](docs/续期落时刻说明.md)，当日锁死，禁用影子草稿与第三路）。
+
+- 并发：`hold:{id}` 抢档锁，后到者仅留 `contention_log` 争用痕并回 409，业务零写。
+- 失败：任一步异常整单回滚，正式行时刻与审计都不留半截，锁必释放。
+- 五处同源（事实源唯一：正式行 `holds.expire_at`）：续期页倒计时、占位详情过期时刻、
+  续期审计（`/api/audit?action=hold_renew`）、对账灯（`/api/reconcile` 的
+  `renew_all_ok/renew_mismatch` 与 `/api/reconcile/holds`）、档期盘
+  （`/api/dashboard` 的 `renew_total`）。
+- 假绿夹具 `fixtures/renew_fake_green.json`：审计声称已续、正式行时刻未动，对账灯判分裂。
+- 测试 `tests/test_renew.py`：假绿先红、双人争用先红、原子回滚，夹具跑本机临时文件库。

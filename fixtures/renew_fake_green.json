@@ -1,0 +1,21 @@
+{
+  "scenario": "续期假成功（假绿）：接口回成功、审计留了 hold_renew 痕，但正式占位行 holds.expire_at 仍是旧时刻。用于先压红再修。",
+  "hold": {
+    "slot_code": "S-PM-02",
+    "party_key": "P-FAKE-RENEW",
+    "seats": 1,
+    "status": "占位中",
+    "expire_at": "2026-11-22T10:00:00",
+    "created_at": "2026-11-22T09:30:00"
+  },
+  "fake_renew_audit": {
+    "actor": "clerk",
+    "action": "hold_renew",
+    "payload": {
+      "old_expire": "2026-11-22T10:00:00",
+      "new_expire": "2026-11-22T10:30:00",
+      "fake_green": true,
+      "note": "只回文案不改正式行时刻的假成功样本"
+    }
+  }
+}
