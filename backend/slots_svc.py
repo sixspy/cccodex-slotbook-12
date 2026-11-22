@@ -118,9 +118,5 @@ def dashboard(authorization: AuthHeader = None):
             "waitlist": conn.execute(
                 "SELECT COUNT(*) c FROM waitlist WHERE status='候补中'"
             ).fetchone()["c"],
-            # 续期计数与审计同源：只认 hold_renew 审计条数
-            "renew_total": conn.execute(
-                "SELECT COUNT(*) c FROM audit_trail WHERE action='hold_renew'"
-            ).fetchone()["c"],
             "now": datetime.now().isoformat(timespec="seconds"),
         }
