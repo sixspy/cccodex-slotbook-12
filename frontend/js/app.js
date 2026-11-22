@@ -1,12 +1,12 @@
 import { createApi } from "./api.js";
 import { slotsViewTemplate } from "./views/slots_view.js";
-import { holdsViewTemplate } from "./views/holds_view.js";
+import { holdsViewTemplate, renewViewTemplate } from "./views/holds_view.js";
 import { waitlistViewTemplate } from "./views/waitlist_view.js";
 import { confirmViewTemplate } from "./views/confirm_view.js";
 import { reconcileViewTemplate } from "./views/reconcile_view.js";
 import { auditViewTemplate } from "./views/audit_view.js";
 
-const { createApp, ref, onMounted } = Vue;
+const { createApp, ref, onMounted, onUnmounted } = Vue;
 
 createApp({
   setup() {
@@ -17,7 +17,7 @@ createApp({
     const err = ref("");
     const actionErr = ref("");
     const tab = ref(0);
-    const nav = ["档期盘", "占位单", "候补队列", "确认入册", "对账互证", "审计争用"];
+    const nav = ["档期盘", "占位单", "候补队列", "确认入册", "对账互证", "审计争用", "续期"];
     const slots = ref([]);
     const holds = ref([]);
     const waitlist = ref([]);
@@ -25,6 +25,10 @@ createApp({
     const recon = ref({});
     const audits = ref([]);
     const contention = ref([]);
+    const renewals = ref([]);
+    const renewAudits = ref([]);
+    const detail = ref(null);
+    const nowTick = ref(Date.now());
     const dash = ref({});
     const holdForm = ref({ slot_code: "S-AM-01", party_key: "P-NEW", seats: 1 });
     const confirmId = ref(1);
@@ -64,6 +68,32 @@ createApp({
       recon.value = await api.get("/api/reconcile");
       audits.value = (await api.get("/api/audit")).items;
       contention.value = (await api.get("/api/contention")).items;
+      renewals.value = (await api.get("/api/renewals")).items;
+      renewAudits.value = (await api.get("/api/renewals/audit")).items;
+    }
+
+    // 倒计时只读服务端 expire_at，本地每秒切片；续期后 refresh 换新时刻。
+    function cd(row) {
+      if (!row || row.status !== "占位中" || !row.expire_at) return "—";
+      const t = Date.parse(row.expire_at);
+      if (Number.isNaN(t)) return "—";
+      const left = Math.max(0, Math.floor((t - nowTick.value) / 1000));
+      const m = Math.floor(left / 60);
+      const s = left % 60;
+      return `${m}分${String(s).padStart(2, "0")}秒`;
+    }
+
+    async function selectHold(id) {
+      detail.value = await api.get(`/api/holds/${id}`);
+    }
+
+    async function doRenew(id) {
+      try {
+        actionErr.value = "";
+        await api.post(`/api/holds/${id}/renew`, { extend_minutes: 30 });
+        await refresh();
+        await selectHold(id);
+      } catch (e) { actionErr.value = e.message; }
     }
 
     async function doHold() {
@@ -79,12 +109,18 @@ createApp({
       catch (e) { actionErr.value = e.message; }
     }
 
-    onMounted(() => { if (token.value) refresh(); });
+    onMounted(() => {
+      if (token.value) refresh();
+      const timer = setInterval(() => { nowTick.value = Date.now(); }, 1000);
+      onUnmounted(() => clearInterval(timer));
+    });
 
     return {
       token, user, username, password, err, actionErr, tab, nav,
       slots, holds, waitlist, bookings, recon, audits, contention, dash,
+      renewals, renewAudits, detail, nowTick,
       holdForm, confirmId, login, logout, refresh, doHold, doConfirm, promoteWait,
+      cd, selectHold, doRenew,
     };
   },
   template: `
@@ -118,6 +154,7 @@ createApp({
       ${confirmViewTemplate}
       ${reconcileViewTemplate}
       ${auditViewTemplate}
+      ${renewViewTemplate}
     </main>
   </div>
   `,

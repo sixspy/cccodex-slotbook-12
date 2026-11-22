@@ -141,6 +141,97 @@ def write_audit(conn, actor: str, action: str, target: str, payload: dict | None
     )
 
 
+# ---- 续期同源：五处（续期页/占位行/审计/对账灯/档期盘）共用此口径 ----
+
+def credential(hold_id: int) -> str:
+    """对外凭证号：由占位主键派生，续期前后不变。"""
+    return f"H-{int(hold_id):06d}"
+
+
+def countdown_seconds(expire_at: str, status: str = "占位中") -> int:
+    """距过期秒数；仅有效占位（占位中）有意义，其余为 0。"""
+    from datetime import datetime
+
+    if status != "占位中":
+        return 0
+    try:
+        dt = datetime.fromisoformat(expire_at)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, int((dt - datetime.now()).total_seconds()))
+
+
+def renew_audits(conn) -> dict[int, list[dict]]:
+    """按占位主键归集续期审计（id 升序），payload 原样带上审计时刻。"""
+    rows = conn.execute(
+        "SELECT id,payload,created_at FROM audit_trail WHERE action='hold_renew' ORDER BY id"
+    ).fetchall()
+    out: dict[int, list[dict]] = {}
+    for r in rows:
+        try:
+            p = json.loads(r["payload"] or "{}")
+        except (TypeError, ValueError):
+            p = {}
+        hid = p.get("hold_id")
+        if hid is None:
+            continue
+        out.setdefault(int(hid), []).append(
+            {**p, "audit_id": r["id"], "audit_at": r["created_at"]}
+        )
+    return out
+
+
+def renew_mismatches(conn, holds=None) -> list[dict]:
+    """有效占位与其续期审计是否账实一致。
+
+    规则：同一占位续期审计须成链（后一条 old_expire == 前一条 new_expire），
+    且最后一条 new_expire 必须等于该行当前 expire_at。无续期审计视为未续期，不判分裂。
+    """
+    if holds is None:
+        holds = conn.execute(
+            "SELECT id,expire_at,status FROM holds WHERE status='占位中'"
+        ).fetchall()
+    audits = renew_audits(conn)
+    bad: list[dict] = []
+    for h in holds:
+        seq = audits.get(int(h["id"]), [])
+        if not seq:
+            continue
+        for prev, cur in zip(seq, seq[1:]):
+            if cur.get("old_expire") != prev.get("new_expire"):
+                bad.append(
+                    {
+                        "hold_id": int(h["id"]),
+                        "reason": "续期审计断链",
+                        "expected": prev.get("new_expire"),
+                        "actual": cur.get("old_expire"),
+                    }
+                )
+                break
+        else:
+            last = seq[-1].get("new_expire")
+            if last != h["expire_at"]:
+                bad.append(
+                    {
+                        "hold_id": int(h["id"]),
+                        "reason": "行过期时刻与续期审计不符",
+                        "expected": last,
+                        "actual": h["expire_at"],
+                    }
+                )
+    return bad
+
+
+def duplicate_active_holds(conn) -> list[dict]:
+    """同一档期同一当事人出现多条有效占位即双有效席。"""
+    rows = conn.execute(
+        """SELECT slot_id, party_key, COUNT(*) c, GROUP_CONCAT(id) ids
+           FROM holds WHERE status='占位中'
+           GROUP BY slot_id, party_key HAVING c > 1"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def ensure_users(conn) -> None:
     for u, p, role in (
         ("admin", "123456", "管理员"),

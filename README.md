@@ -31,3 +31,17 @@
 - 确认失败整单回滚 vs 影子确认后晋升
 - 释放作废正式册 vs 快照强制复检
 - 跨档迁移整笔事务 vs 双写影子桥
+
+## 续期（2026-11-22 锁死）
+
+命运：**就地改写原正式有效占位行** `holds.expire_at` 并同事务落
+`audit_trail.action='hold_renew'`；占位主键与对外凭证号 `H-{id:06d}` 不变；
+失败则时刻与审计同败。不采用“作废旧行另开续期行”，禁止混用与第三路。
+详见 `docs/续期账本命运说明.md`。
+
+- 并发：续期抢 `slot:<code>` 档锁，后到只记 `contention_log`。
+- 同源五处：续期页倒计时、占位详情倒计时、占位行 `expire_at`、续期审计、
+  对账灯与档期盘；对账新增 `renew_ok` / `renew_mismatches` / `duplicate_active`。
+- 接口：`POST /api/holds/{id}/renew`、`GET /api/holds/{id}`、`GET /api/renewals`、
+  `GET /api/renewals/audit`。
+- 假绿夹具：`fixtures/renew_fake_green.json`；回归测 `tests/test_renew.py`。

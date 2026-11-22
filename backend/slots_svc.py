@@ -7,10 +7,35 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from auth import AuthHeader, require_user, require_writer
-from db import connect, write_audit
+from db import connect, duplicate_active_holds, renew_mismatches, write_audit
 from locks import release, require_lock
 
 router = APIRouter(tags=["slots"])
+
+
+def _slot_extras(conn) -> dict[int, dict]:
+    """档期盘同源列：有效占位中最早到期时刻 + 续期是否同源。"""
+    bad_ids = {b["hold_id"] for b in renew_mismatches(conn)}
+    dup_slots = {int(d["slot_id"]) for d in duplicate_active_holds(conn)}
+    out: dict[int, dict] = {}
+    rows = conn.execute(
+        """SELECT slot_id, id, MIN(expire_at) AS next_expire
+           FROM holds WHERE status='占位中' GROUP BY slot_id"""
+    ).fetchall()
+    for r in rows:
+        sid = int(r["slot_id"])
+        out[sid] = {"next_hold_expire": r["next_expire"]}
+    for h in conn.execute(
+        "SELECT id,slot_id FROM holds WHERE status='占位中'"
+    ).fetchall():
+        sid = int(h["slot_id"])
+        item = out.setdefault(sid, {"next_hold_expire": None})
+        item["renew_ok"] = (
+            sid not in dup_slots and int(h["id"]) not in bad_ids
+        ) and item.get("renew_ok", True)
+    for sid in dup_slots:
+        out.setdefault(sid, {"next_hold_expire": None})["renew_ok"] = False
+    return out
 
 
 class SlotIn(BaseModel):
@@ -32,7 +57,15 @@ def list_slots(authorization: AuthHeader = None):
         rows = conn.execute(
             "SELECT * FROM slots ORDER BY start_at, code"
         ).fetchall()
-        return {"items": [dict(r) for r in rows]}
+        extras = _slot_extras(conn)
+        items = []
+        for r in rows:
+            item = dict(r)
+            ex = extras.get(int(r["id"]), {})
+            item["next_hold_expire"] = ex.get("next_hold_expire")
+            item["renew_ok"] = ex.get("renew_ok", True)
+            items.append(item)
+        return {"items": items}
 
 
 @router.get("/api/slots/{code}")
@@ -42,7 +75,11 @@ def get_slot(code: str, authorization: AuthHeader = None):
         row = conn.execute("SELECT * FROM slots WHERE code=?", (code,)).fetchone()
         if not row:
             raise HTTPException(404, "档期不存在")
-        return dict(row)
+        item = dict(row)
+        ex = _slot_extras(conn).get(int(row["id"]), {})
+        item["next_hold_expire"] = ex.get("next_hold_expire")
+        item["renew_ok"] = ex.get("renew_ok", True)
+        return item
 
 
 @router.post("/api/slots")
@@ -118,5 +155,7 @@ def dashboard(authorization: AuthHeader = None):
             "waitlist": conn.execute(
                 "SELECT COUNT(*) c FROM waitlist WHERE status='候补中'"
             ).fetchone()["c"],
+            "renew_mismatches": len(renew_mismatches(conn)),
+            "duplicate_active": len(duplicate_active_holds(conn)),
             "now": datetime.now().isoformat(timespec="seconds"),
         }
